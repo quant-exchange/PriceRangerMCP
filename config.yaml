@@ -1,0 +1,15 @@
+# Which model drives the grading loop. One provider at a time.
+# Delete this file and the eval falls back to the built-in openai defaults.
+provider: openai        # openai | anthropic
+
+openai:
+  model: gpt-4o
+  temperature: 0
+  api_key_env: OPENAI_API_KEY
+
+anthropic:
+  # Set this to a model your key can actually access — the ID is not validated
+  # until the first call, and a wrong one fails there, not at startup.
+  model: claude-sonnet-4-5
+  temperature: 0
+  api_key_env: ANTHROPIC_API_KEY
