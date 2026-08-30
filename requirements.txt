@@ -1,0 +1,12 @@
+# Direct dependencies of priceranger_mcp_eval.py.
+# Versions below are the ones this example was last run against, green, in prod.
+
+httpx~=0.28.1
+
+langchain-core~=1.6.1
+langchain-openai~=1.6.0
+langchain-mcp-adapters~=0.3.2
+
+# Pinned to the 1.2 line: the example uses the prebuilt create_react_agent,
+# deprecated since langgraph 1.0 and liable to be dropped in 2.x.
+langgraph~=1.2.11
