@@ -4,12 +4,16 @@ An open example of how an agentic process qualifies the PriceRanger MCP server:
 what it is, what it is not, and how to grade it yourself before wiring it in.
 
 STACK
-  LangChain supplies the pieces (ChatOpenAI, the @tool decorator, and the MCP
-  adapter that turns the server's tools into LangChain tools). LangGraph
+  LangChain supplies the pieces (the chat model, the @tool decorator, and the
+  MCP adapter that turns the server's tools into LangChain tools). LangGraph
   supplies the runtime: create_react_agent returns a CompiledStateGraph, so the
   reason-act loop is a state graph rather than a hand-rolled while-loop. The
   graph is a prebuilt -- nothing here authors nodes or edges -- which is the
   point: wiring an MCP server into an agent should not require graph plumbing.
+
+  The grader is swappable. config.yaml picks openai or anthropic; the tools,
+  the questions and the loop are identical either way. A service worth wiring
+  in should survive being graded by more than one model.
 
 WHAT THIS SERVICE IS
   Risk telemetry with receipts. Per asset, per hour: a calibrated range band
@@ -28,13 +32,20 @@ WHAT YOU CANNOT GET ELSEWHERE
   does, it lands behind the same tools.
 
 HOW TO RUN
-  pip install langgraph langchain-openai langchain-mcp-adapters fastmcp httpx
+  pip install -r requirements.txt
   export PRICERANGER_TOKEN=<your minted token>     # signup at priceranger.ai
-  export OPENAI_API_KEY=<your key>
+  export OPENAI_API_KEY=<your key>                 # or ANTHROPIC_API_KEY
   python priceranger_mcp_eval.py
 
-  Set UNIVERSE_URL to the published edge-universe JSON to enable the routing
-  check; the eval runs without it (it just skips the routing step).
+  Pick the grader in config.yaml (provider: openai | anthropic), or point
+  PRICERANGER_EVAL_CONFIG at another file. Only the selected provider is
+  imported, so you need just the one installed. The resolved provider, model
+  and config source are printed at the top of every run.
+
+  The routing check reads the published edge-universe JSON by default. Override
+  it with PRICERANGER_EDGE_UNIVERSE_URL, or point PRICERANGER_EDGE_UNIVERSE_PATH
+  at a local copy. If it is unreachable the eval skips that step rather than
+  failing.
 
 THE POINT
   The agent does not take the marketing at its word. It reads the routing
@@ -51,16 +62,15 @@ import os
 import urllib.request
 
 import httpx
+import yaml
 
 try:
     from langchain_core.tools import tool
     from langchain_mcp_adapters.client import MultiServerMCPClient
-    from langchain_openai import ChatOpenAI
     from langgraph.prebuilt import create_react_agent
 except ImportError as exc:  # pragma: no cover - dependency hint
     raise SystemExit(
-        "Missing deps: pip install langgraph langchain-openai "
-        "langchain-mcp-adapters fastmcp httpx"
+        "Missing deps: pip install -r requirements.txt"
     ) from exc
 
 MCP_URL = "https://priceranger.ai/mcp/"
@@ -88,6 +98,74 @@ if not TOKEN:
         "PRICERANGER_TOKEN is not set. Mint a token from your priceranger.ai "
         "account; the MCP has no anonymous tier, so an agent needs one to read."
     )
+
+# Which LLM grades the service. The agent, the tools and the questions are
+# identical either way -- only the reasoner changes, which is the point: a
+# service worth wiring in should survive being graded by more than one model.
+CONFIG_PATH = os.environ.get(
+    "PRICERANGER_EVAL_CONFIG",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml"),
+)
+
+_PROVIDER_PACKAGES = {"openai": "langchain-openai",
+                      "anthropic": "langchain-anthropic"}
+
+DEFAULT_CONFIG = {
+    "provider": "openai",
+    "openai": {"model": "gpt-4o", "temperature": 0,
+               "api_key_env": "OPENAI_API_KEY"},
+    "anthropic": {"model": "claude-sonnet-4-5", "temperature": 0,
+                  "api_key_env": "ANTHROPIC_API_KEY"},
+}
+
+
+def load_config() -> tuple[dict, str]:
+    """Merge config.yaml over the built-in defaults; report where it came from."""
+    try:
+        with open(CONFIG_PATH) as fh:
+            loaded = yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        return DEFAULT_CONFIG, "built-in defaults (no config.yaml)"
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"{CONFIG_PATH} is not valid YAML: {exc}") from exc
+    if not isinstance(loaded, dict):
+        raise SystemExit(f"{CONFIG_PATH} must contain a YAML mapping.")
+    cfg = {**DEFAULT_CONFIG, **loaded}
+    for name in _PROVIDER_PACKAGES:
+        cfg[name] = {**DEFAULT_CONFIG[name], **(loaded.get(name) or {})}
+    return cfg, CONFIG_PATH
+
+
+def build_llm(cfg: dict):
+    """Instantiate the configured chat model, importing only that provider."""
+    provider = str(cfg.get("provider", "")).strip().lower()
+    if provider not in _PROVIDER_PACKAGES:
+        raise SystemExit(
+            f"config: 'provider' must be one of "
+            f"{sorted(_PROVIDER_PACKAGES)}; got {cfg.get('provider')!r}"
+        )
+    settings = cfg[provider]
+    key_env = settings.get("api_key_env") or ""
+    if not os.environ.get(key_env, "").strip():
+        raise SystemExit(
+            f"provider is '{provider}', so {key_env} must be set. "
+            f"Export it, or switch 'provider' in {CONFIG_PATH}."
+        )
+    try:
+        if provider == "openai":
+            from langchain_openai import ChatOpenAI as Chat
+        else:
+            from langchain_anthropic import ChatAnthropic as Chat
+    except ImportError as exc:
+        raise SystemExit(
+            f"provider '{provider}' needs: "
+            f"pip install {_PROVIDER_PACKAGES[provider]}"
+        ) from exc
+    return Chat(model=settings["model"],
+                temperature=settings.get("temperature", 0))
+
+
+CONFIG, CONFIG_SOURCE = load_config()
 
 
 class Bearer(httpx.Auth):
@@ -213,7 +291,10 @@ async def main() -> None:
     tools = list(mcp_tools) + [read_edge_universe]
     print(f"[wired {len(mcp_tools)} MCP tools + edge universe; token from env]")
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = build_llm(CONFIG)
+    active = CONFIG[CONFIG["provider"]]
+    print(f"[grader: {CONFIG['provider']}/{active['model']} "
+          f"temp={active.get('temperature', 0)} · config: {CONFIG_SOURCE}]")
     agent = create_react_agent(llm, tools)
     out = await agent.ainvoke({"messages": [{"role": "user", "content": QUESTION}]})
     msgs = out["messages"]
