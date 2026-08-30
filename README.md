@@ -4,8 +4,8 @@ An open example of how an agentic process qualifies the
 [PriceRanger](https://priceranger.ai) MCP server: what it is, what it is not,
 and how to grade it on evidence before wiring it into a trading agent.
 
-**`priceranger_mcp_eval.py`** is the whole example. One file, no framework
-beyond LangGraph's prebuilt ReAct agent.
+**`priceranger_mcp_eval.py`** is the whole example. One file plus a small
+`config.yaml`, no framework beyond LangGraph's prebuilt ReAct agent.
 
 ## What the service is (and is not)
 
@@ -32,8 +32,10 @@ band the moment it earns its place, with no integration change.
 ```mermaid
 flowchart TD
     subgraph YOU["Your process"]
-        ENV["Env vars<br/>PRICERANGER_TOKEN · OPENAI_API_KEY"]
-        AGENT["LangGraph ReAct agent<br/>gpt-4o, temp 0"]
+        CFG["config.yaml<br/>provider: openai or anthropic"]
+        ENV["Env vars<br/>PRICERANGER_TOKEN · provider API key"]
+        AGENT["LangGraph ReAct agent<br/>swappable grader, temp 0"]
+        CFG --> AGENT
         ENV --> AGENT
     end
 
@@ -76,10 +78,44 @@ export OPENAI_API_KEY=<your key>
 python priceranger_mcp_eval.py
 ```
 
+### Choosing the grader
+
+`config.yaml` picks which model does the grading. The tools, the questions and
+the loop are identical either way — a service worth wiring in should survive
+being graded by more than one model.
+
+```yaml
+provider: openai        # openai | anthropic
+
+openai:
+  model: gpt-4o
+  temperature: 0
+  api_key_env: OPENAI_API_KEY
+
+anthropic:
+  model: claude-sonnet-4-5
+  temperature: 0
+  api_key_env: ANTHROPIC_API_KEY
+```
+
+Only the selected provider is imported, so you need just the one installed —
+drop the other from `requirements.txt` if you like. Export the matching key
+(`ANTHROPIC_API_KEY` for `provider: anthropic`) and the run reports what it
+resolved:
+
+```
+[grader: openai/gpt-4o temp=0 · config: /path/to/config.yaml]
+```
+
+Delete `config.yaml` and it falls back to the built-in OpenAI defaults, saying
+so on that same line. Set the Anthropic `model` to something your key can
+actually reach — a wrong ID fails on the first call, not at startup.
+
 Optional overrides:
 
 | Env var | Default | Purpose |
 |---|---|---|
+| `PRICERANGER_EVAL_CONFIG` | `config.yaml` beside the script | Use a different config file |
 | `PRICERANGER_EDGE_UNIVERSE_URL` | `https://priceranger.ai/widgets/edge_universe.json` | Routing artifact over HTTPS |
 | `PRICERANGER_EDGE_UNIVERSE_PATH` | unset | Read the routing artifact from a local file instead |
 
@@ -112,6 +148,7 @@ the whole design. The example is a grader, not a brochure.
 
 ## Moving this to your own repo
 
-Everything is self-contained: the one `.py` file plus this README. The only
-coupling to PriceRanger is the public MCP URL and your token. Swap `MCP_URL`
-and the tool names and the same grading loop works against any MCP server.
+Everything is self-contained: the one `.py` file, this README, `config.yaml`,
+and `requirements.txt`. The only coupling to PriceRanger is the public MCP URL
+and your token. Swap `MCP_URL` and the tool names and the same grading loop
+works against any MCP server.
