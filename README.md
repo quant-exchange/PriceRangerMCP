@@ -64,8 +64,10 @@ flowchart TD
 
 ## Setup
 
+This is a **client** — you do not run an MCP server. Last run green on Python 3.12.
+
 ```bash
-pip install langgraph langchain-openai langchain-mcp-adapters fastmcp httpx
+pip install -r requirements.txt
 ```
 
 ```bash
