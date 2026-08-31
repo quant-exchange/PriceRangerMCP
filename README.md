@@ -1,3 +1,5 @@
+<img width="1944" height="432" alt="priceranger_logo" src="https://github.com/user-attachments/assets/f5123b8e-4315-43e6-96ee-4a7cabd08b54" />
+
 # PriceRanger MCP — Agent Value Check
 
 An open example of how an agentic process qualifies the
