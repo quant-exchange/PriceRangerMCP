@@ -83,12 +83,12 @@ MCP_URL = "https://priceranger.ai/mcp/"
 # the answer comes back as data, not a transport error.
 MIN_CALL_GAP_SECONDS = 1.0
 
-# The routing artifact is published beside the widget cards. If the public JSON
-# route is not live yet, point this at a local copy or leave it None; the eval
-# then skips the routing step instead of failing.
+# The routing artifact is published as a public read-only API endpoint. If it
+# has not published yet the endpoint 404s with edge_universe_not_published and
+# the eval reports the gap instead of failing.
 UNIVERSE_URL = os.environ.get(
     "PRICERANGER_EDGE_UNIVERSE_URL",
-    "https://priceranger.ai/widgets/edge_universe.json",
+    "https://priceranger.ai/api/edge-universe",
 )
 UNIVERSE_PATH = os.environ.get("PRICERANGER_EDGE_UNIVERSE_PATH")  # local override
 
@@ -211,15 +211,28 @@ def _paced_client_factory(headers=None, timeout=None, auth=None) -> httpx.AsyncC
 
 
 def fetch_universe() -> dict:
-    """Read the routing surface: which assets beat the free EWMA baseline."""
+    """Read the routing surface: which assets beat the free EWMA baseline.
+
+    A 200 is not proof of data: an SPA catch-all answers an unknown JSON path
+    with 200 + text/html (the app's index.html), which is how this once read a
+    web page as a routing table. So a non-JSON body or a body without the
+    routing keys is an error the caller reports, never data the agent grades.
+    """
     try:
         if UNIVERSE_PATH:
             return json.loads(open(UNIVERSE_PATH).read())
         req = urllib.request.Request(UNIVERSE_URL,
                                      headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=15) as resp:
+            ctype = resp.headers.get("Content-Type", "")
             body = resp.read().decode()
-        return json.loads(body)
+        if "json" not in ctype.lower():
+            return {"error": f"expected JSON, got Content-Type {ctype!r} "
+                             "(a web page is not a routing table)"}
+        data = json.loads(body)
+        if not isinstance(data, dict) or "use_us" not in data:
+            return {"error": "routing artifact missing 'use_us'; not the expected payload"}
+        return data
     except Exception as exc:  # noqa: BLE001 - report, don't crash the eval
         return {"error": f"{type(exc).__name__}: {exc}"}
 
@@ -244,6 +257,17 @@ its target, a verdict, and its failed tests? Do the ladder rungs carry measured
 touch rates and dwell, or bare geometry? Do the use_us assets actually look
 sharper than the use_ewma ones when you read their receipts?
 
+STEP 3: the horizon caveat. Call get_shadow_frequency. The service runs every
+asset at 1h AND 4h, and states -- with measured numbers -- that the 1h band
+under-covers its 90% target while the 4h band over-covers, and that the 4h
+direction read is the first signal to clear a coin-flip z-gate. Check the
+per-lane pairing on one asset with get_shadow_frequency_asset. Then judge the
+harder thing: does the service correctly label its own 4h signal as shadow-only
+-- graded in public but NOT routed or tradable -- or does it let an early
+flicker read as a reason to wire something in? A service that reports its own
+early signal AND its own restraint is more trustworthy than one that reports
+only the signal.
+
 Then answer, briefly and without flattery:
 1. WIRE IT IN? YES or NO, one sentence why.
 2. RECEIPTS BACK THE CLAIM? Does the coverage/verdict/failed-tests evidence
@@ -255,6 +279,11 @@ Then answer, briefly and without flattery:
    subscriber gets a sharper band the moment it earns its place -- without
    changing how they integrate. Is that a reason to stay subscribed as it
    lands? One sentence.
+5. THE HORIZON SIGNAL: the service publishes that its 1h lane misses its target
+   while its 4h shadow lanes over-cover, and flags a 4h direction flicker as
+   immature and non-tradable. Does publishing an honest negative about its own
+   1h lane alongside an unproven 4h positive raise or lower your confidence in
+   the receipts? One sentence.
 """
 
 
