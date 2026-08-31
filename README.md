@@ -1,5 +1,3 @@
-<img width="1944" height="432" alt="priceranger_logo" src="https://github.com/user-attachments/assets/f5123b8e-4315-43e6-96ee-4a7cabd08b54" />
-
 # PriceRanger MCP — Agent Value Check
 
 An open example of how an agentic process qualifies the
@@ -126,27 +124,42 @@ grades on receipts alone — it reports the gap instead of failing.
 
 ## What a run looks like
 
-The agent reads the routing surface, then opens graded receipts on two `use_us`
-and two `use_ewma` assets, and answers four questions without flattery:
+The agent reads the routing surface, opens graded receipts on the assets, then
+checks the 1h-vs-4h horizon claim against the shadow-lane card — and answers
+five questions without flattery. A real run against prod:
 
 ```
 tools called: ['read_edge_universe',
-               'get_agent_brief', 'get_price_ladder',   # use_us asset 1
-               'get_agent_brief', 'get_price_ladder',   # use_us asset 2
-               'get_agent_brief', 'get_price_ladder',   # use_ewma asset 1
-               'get_agent_brief', 'get_price_ladder']   # use_ewma asset 2
+               'get_agent_brief', 'get_agent_brief',
+               'get_agent_brief', 'get_agent_brief',
+               'get_price_ladder', 'get_price_ladder',
+               'get_price_ladder', 'get_price_ladder',
+               'get_shadow_frequency', 'get_shadow_frequency_asset']
 
 1. WIRE IT IN?  YES — calibrated risk telemetry with forward-tested receipts.
 2. RECEIPTS BACK THE CLAIM?  Yes — coverage, verdict, and failed-tests travel
-   with the numbers; use_us reads sharper than use_ewma.
+   with the numbers; the service reports where it does not beat the baseline.
 3. UNIQUE?  A calibrated hour-ahead band with measured coverage and graded
    touch odds — not available from a broker API or free feed.
-4. PREMIUM HOOK:  Yes — inheriting a sharper band the moment it proves superior,
-   with no integration change, is a compelling reason to stay subscribed.
+4. PREMIUM HOOK:  Yes — a sharper band that earns its place with no integration
+   change is a compelling reason to stay subscribed.
+5. THE HORIZON SIGNAL:  Publishing an honest negative about the 1h lane
+   alongside an unproven 4h positive raises confidence — it shows the service
+   does not promote immature signals.
 ```
 
 The verdict is the model's, reached from the service's own receipts — that is
 the whole design. The example is a grader, not a brochure.
+
+Two things a run can teach you that the verdict alone cannot:
+
+- **Tool order is not guaranteed.** The agent reads the same evidence whether it
+  pairs brief→ladder per asset or groups them (as above). Judge the verdict, not
+  the call sequence.
+- **A degraded read is the eval working.** If the routing artifact is
+  unreachable, or a surface is not yet published, the agent says so instead of
+  failing — and an earlier run correctly answered NO when the shadow tools were
+  not yet advertised. A grader that can only say yes is not grading.
 
 ## Moving this to your own repo
 
