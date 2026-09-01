@@ -38,51 +38,9 @@ band the moment it earns its place, with no integration change.
 ## How it works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/how-it-works-dark.png">
-  <img alt="config and env feed a LangGraph agent, which reaches PriceRanger through a bearer-authed paced transport, and runs a four-step grading loop over the routing surface and the receipts" src="docs/how-it-works-light.png" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="how-it-works-dark.png">
+  <img alt="config and env feed a LangGraph agent, which reaches PriceRanger through a bearer-authed paced transport, and runs a four-step grading loop over the routing surface and the receipts" src="how-it-works-light.png" width="100%">
 </picture>
-
-<details>
-<summary>Same diagram as Mermaid source</summary>
-
-```mermaid
-flowchart TD
-    subgraph YOU["Your process"]
-        CFG["config.yaml<br/>provider: openai or anthropic"]
-        ENV["Env vars<br/>PRICERANGER_TOKEN + provider API key"]
-        AGENT["LangGraph ReAct agent<br/>swappable grader, temp 0"]
-        CFG --> AGENT
-        ENV --> AGENT
-    end
-
-    subgraph PLUMB["Client plumbing"]
-        AUTH["Bearer auth via httpx.Auth<br/>a bare header gets dropped"]
-        PACED["Paced transport, 1s gap<br/>one session per call, so<br/>unpaced agents get 429s"]
-        AUTH --> PACED
-    end
-
-    subgraph PR["PriceRanger prod"]
-        NGINX["nginx rate limit<br/>about 10 req/s per IP"]
-        MCP["FastMCP server<br/>13 read-only analytics tools"]
-        CARDS["Graded artifacts<br/>ui_widget cards + ledgers"]
-        NGINX --> MCP --> CARDS
-    end
-
-    subgraph LOOP["The grading loop"]
-        S1["1 - read_edge_universe<br/>where do receipts say we beat EWMA?"]
-        S2["2 - get_agent_brief x4<br/>coverage vs target, verdict, failed tests"]
-        S3["3 - get_price_ladder x4<br/>scored rungs? touch odds, dwell, fill"]
-        S4["4 - Verdict<br/>wire in? receipts back the claim?<br/>unique vs a broker API? premium hook?"]
-        S1 --> S2 --> S3 --> S4
-    end
-
-    AGENT --> AUTH
-    PACED --> NGINX
-    AGENT -.->|"calls tools in order"| S1
-    MCP -.->|"payloads, not errors"| S1
-```
-
-</details>
 
 ## Setup
 
