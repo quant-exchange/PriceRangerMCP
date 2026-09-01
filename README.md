@@ -41,35 +41,35 @@ band the moment it earns its place, with no integration change.
 flowchart TD
     subgraph YOU["Your process"]
         CFG["config.yaml<br/>provider: openai or anthropic"]
-        ENV["Env vars<br/>PRICERANGER_TOKEN · provider API key"]
+        ENV["Env vars<br/>PRICERANGER_TOKEN + provider API key"]
         AGENT["LangGraph ReAct agent<br/>swappable grader, temp 0"]
         CFG --> AGENT
         ENV --> AGENT
     end
 
-    subgraph PLUMB["Client plumbing (the two gotchas)"]
-        AUTH["Bearer auth via httpx.Auth<br/><i>adapter drops bare headers</i>"]
-        PACED["Paced transport<br/>1s min gap, serialized<br/><i>adapter opens a session per call;<br/>unpaced agents 429</i>"]
+    subgraph PLUMB["Client plumbing - the two gotchas"]
+        AUTH["Bearer auth via httpx.Auth<br/>a bare header gets dropped"]
+        PACED["Paced transport, 1s min gap<br/>the adapter opens a session per call,<br/>so unpaced agents get 429s"]
     end
 
-    subgraph PR["PriceRanger prod · https://priceranger.ai/mcp"]
-        NGINX["nginx rate limit<br/>~10 req/s per IP"]
+    subgraph PR["PriceRanger prod"]
+        NGINX["nginx rate limit<br/>about 10 req/s per IP"]
         MCP["FastMCP server<br/>13 read-only analytics tools"]
         CARDS["Graded artifacts<br/>ui_widget cards + ledgers"]
         NGINX --> MCP --> CARDS
     end
 
-    subgraph LOOP["The grading loop (the point)"]
-        S1["1 · read_edge_universe<br/>where do receipts say we beat EWMA?"]
-        S2["2 · get_agent_brief ×4<br/>coverage vs target · verdict · failed tests"]
-        S3["3 · get_price_ladder ×4<br/>scored rungs? touch odds · dwell · fill"]
-        S4["4 · Verdict<br/>wire in? · receipts back the claim? ·<br/>unique fact vs broker API? · premium hook?"]
+    subgraph LOOP["The grading loop - the point"]
+        S1["1. read_edge_universe<br/>where do receipts say we beat EWMA?"]
+        S2["2. get_agent_brief x4<br/>coverage vs target, verdict, failed tests"]
+        S3["3. get_price_ladder x4<br/>scored rungs? touch odds, dwell, fill"]
+        S4["4. Verdict<br/>wire in? receipts back the claim?<br/>unique vs a broker API? premium hook?"]
         S1 --> S2 --> S3 --> S4
     end
 
     AGENT --> AUTH --> PACED --> NGINX
-    AGENT -.->|"calls tools in order"| LOOP
-    MCP -.->|"payloads, not errors"| LOOP
+    AGENT -.->|"calls tools in order"| S1
+    MCP -.->|"payloads, not errors"| S1
 ```
 
 ## Setup
@@ -331,4 +331,5 @@ auth class and the paced transport are duplicated between them on purpose, so
 either one can be copied out by itself and still work. The only coupling to
 PriceRanger is the public MCP URL and your token. Swap `MCP_URL` and the tool
 names and the same grading loop works against any MCP server.
+
 
