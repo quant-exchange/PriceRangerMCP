@@ -37,6 +37,9 @@ HOW TO RUN
   export OPENAI_API_KEY=<your key>                 # or ANTHROPIC_API_KEY
   python priceranger_mcp_eval.py
 
+  For a deterministic, no-LLM pass over every tool on the server -- what each
+  one returns and what it is worth -- run priceranger_mcp_tool_eval.py instead.
+
   Pick the grader in config.yaml (provider: openai | anthropic), or point
   PRICERANGER_EVAL_CONFIG at another file. Only the selected provider is
   imported, so you need just the one installed. The resolved provider, model
@@ -59,6 +62,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import urllib.request
 
 import httpx
@@ -73,7 +77,7 @@ except ImportError as exc:  # pragma: no cover - dependency hint
         "Missing deps: pip install -r requirements.txt"
     ) from exc
 
-MCP_URL = "https://priceranger.ai/mcp/"
+MCP_URL = "https://priceranger.ai/mcp"
 
 # The public endpoint rate-limits by IP (nginx: ~10 req/s, short burst), and the
 # MCP adapter opens a fresh session per tool call (initialize + call + teardown
@@ -98,6 +102,10 @@ if not TOKEN:
         "PRICERANGER_TOKEN is not set. Mint a token from your priceranger.ai "
         "account; the MCP has no anonymous tier, so an agent needs one to read."
     )
+
+# A minted user token already identifies its operator. The owner's shared admin
+# token does not, so it names one explicitly. Normal users leave this unset.
+OPERATOR = os.environ.get("PRICERANGER_OPERATOR", "").strip()
 
 # Which LLM grades the service. The agent, the tools and the questions are
 # identical either way -- only the reasoner changes, which is the point: a
@@ -146,6 +154,15 @@ def build_llm(cfg: dict):
         )
     settings = cfg[provider]
     key_env = settings.get("api_key_env") or ""
+    # This field holds the NAME of an env var. Pasting the key itself here is an
+    # easy mistake, and every message below would otherwise echo it.
+    if key_env and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env):
+        raise SystemExit(
+            f"config: '{provider}.api_key_env' must be the NAME of an environment "
+            "variable (e.g. OPENAI_API_KEY), not the key itself. The value has "
+            "been withheld from this message. Export the key instead and keep "
+            "config.yaml free of secrets \u2014 it is meant to be committed."
+        )
     if not os.environ.get(key_env, "").strip():
         raise SystemExit(
             f"provider is '{provider}', so {key_env} must be set. "
@@ -178,6 +195,8 @@ class Bearer(httpx.Auth):
 
     def auth_flow(self, request):
         request.headers["Authorization"] = f"Bearer {TOKEN}"
+        if OPERATOR:
+            request.headers["X-Operator-Id"] = OPERATOR
         yield request
 
 
@@ -252,20 +271,23 @@ baseline (use_us) and which do not (use_ewma). The whole claim is routing:
 
 STEP 2: verify the receipts. Pick two assets from use_us and two from use_ewma
 (or any four assets if there is no universe), and for each call get_agent_brief
-and get_price_ladder. Check: does the band publish its realized coverage against
-its target, a verdict, and its failed tests? Do the ladder rungs carry measured
-touch rates and dwell, or bare geometry? Do the use_us assets actually look
-sharper than the use_ewma ones when you read their receipts?
+and get_price_ladder. get_agent_brief is compact by default -- the triage row
+still carries band coverage, the verdict and the failed tests, which is what you
+are checking; pass compact=false only if you want the long-form detail. Check:
+does the band publish its realized coverage against its target, a verdict, and
+its failed tests? Do the ladder rungs carry measured touch rates and dwell, or
+bare geometry? Do the use_us assets actually look sharper than the use_ewma ones
+when you read their receipts?
 
 STEP 3: the horizon caveat. Call get_shadow_frequency. The service runs every
 asset at 1h AND 4h, and states -- with measured numbers -- that the 1h band
 under-covers its 90% target while the 4h band over-covers, and that the 4h
 direction read is the first signal to clear a coin-flip z-gate. Check the
-per-lane pairing on one asset with get_shadow_frequency_asset. Then judge the
-harder thing: does the service correctly label its own 4h signal as shadow-only
--- graded in public but NOT routed or tradable -- or does it let an early
-flicker read as a reason to wire something in? A service that reports its own
-early signal AND its own restraint is more trustworthy than one that reports
+per-lane pairing on one asset with get_shadow_frequency(asset="BTC"). Then judge
+the harder thing: does the service correctly label its own 4h signal as
+shadow-only -- graded in public but NOT routed or tradable -- or does it let an
+early flicker read as a reason to wire something in? A service that reports its
+own early signal AND its own restraint is more trustworthy than one that reports
 only the signal.
 
 Then answer, briefly and without flattery:
