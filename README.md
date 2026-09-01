@@ -37,6 +37,14 @@ band the moment it earns its place, with no integration change.
 
 ## How it works
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/how-it-works-dark.png">
+  <img alt="config and env feed a LangGraph agent, which reaches PriceRanger through a bearer-authed paced transport, and runs a four-step grading loop over the routing surface and the receipts" src="docs/how-it-works-light.png" width="100%">
+</picture>
+
+<details>
+<summary>Same diagram as Mermaid source</summary>
+
 ```mermaid
 flowchart TD
     subgraph YOU["Your process"]
@@ -47,9 +55,10 @@ flowchart TD
         ENV --> AGENT
     end
 
-    subgraph PLUMB["Client plumbing - the two gotchas"]
+    subgraph PLUMB["Client plumbing"]
         AUTH["Bearer auth via httpx.Auth<br/>a bare header gets dropped"]
-        PACED["Paced transport, 1s min gap<br/>the adapter opens a session per call,<br/>so unpaced agents get 429s"]
+        PACED["Paced transport, 1s gap<br/>one session per call, so<br/>unpaced agents get 429s"]
+        AUTH --> PACED
     end
 
     subgraph PR["PriceRanger prod"]
@@ -59,18 +68,21 @@ flowchart TD
         NGINX --> MCP --> CARDS
     end
 
-    subgraph LOOP["The grading loop - the point"]
-        S1["1. read_edge_universe<br/>where do receipts say we beat EWMA?"]
-        S2["2. get_agent_brief x4<br/>coverage vs target, verdict, failed tests"]
-        S3["3. get_price_ladder x4<br/>scored rungs? touch odds, dwell, fill"]
-        S4["4. Verdict<br/>wire in? receipts back the claim?<br/>unique vs a broker API? premium hook?"]
+    subgraph LOOP["The grading loop"]
+        S1["1 - read_edge_universe<br/>where do receipts say we beat EWMA?"]
+        S2["2 - get_agent_brief x4<br/>coverage vs target, verdict, failed tests"]
+        S3["3 - get_price_ladder x4<br/>scored rungs? touch odds, dwell, fill"]
+        S4["4 - Verdict<br/>wire in? receipts back the claim?<br/>unique vs a broker API? premium hook?"]
         S1 --> S2 --> S3 --> S4
     end
 
-    AGENT --> AUTH --> PACED --> NGINX
+    AGENT --> AUTH
+    PACED --> NGINX
     AGENT -.->|"calls tools in order"| S1
     MCP -.->|"payloads, not errors"| S1
 ```
+
+</details>
 
 ## Setup
 
@@ -326,10 +338,17 @@ question, and let the specialist answer its own.
 ## Moving this to your own repo
 
 Everything is self-contained: the two `.py` files, this README, `.gitignore`,
-`config.yaml`, and `requirements.txt`. Each script stands alone — the Bearer
-auth class and the paced transport are duplicated between them on purpose, so
-either one can be copied out by itself and still work. The only coupling to
-PriceRanger is the public MCP URL and your token. Swap `MCP_URL` and the tool
-names and the same grading loop works against any MCP server.
+`config.yaml`, `requirements.txt`, and `docs/` (the two diagram exports). Each
+script stands alone — the Bearer auth class and the paced transport are
+duplicated between them on purpose, so either one can be copied out by itself
+and still work. The only coupling to PriceRanger is the public MCP URL and your
+token. Swap `MCP_URL` and the tool names and the same grading loop works against
+any MCP server.
+
+The diagram ships as both a PNG pair and Mermaid source. Regenerate the images
+after editing the source — Mermaid renders `1. text` in a node label as a
+markdown ordered list and silently replaces the node with *"Unsupported
+markdown: list"*, so check the render rather than trusting that it parsed.
+
 
 
