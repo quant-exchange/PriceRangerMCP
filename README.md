@@ -37,10 +37,7 @@ band the moment it earns its place, with no integration change.
 
 ## How it works
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="how-it-works-dark.png">
-  <img alt="config and env feed a LangGraph agent, which reaches PriceRanger through a bearer-authed paced transport, and runs a four-step grading loop over the routing surface and the receipts" src="how-it-works-light.png" width="100%">
-</picture>
+<img width="2264" height="5317" alt="how-it-works-dark" src="https://github.com/user-attachments/assets/76985a6a-8a06-4754-bf18-6c461a576655" />
 
 ## Setup
 
