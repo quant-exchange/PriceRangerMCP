@@ -206,6 +206,8 @@ No LLM, no API key, no opinions. It calls **every tool the server advertises**,
 checks each payload actually contains the evidence that tool claims to carry,
 prints what each one is worth, and exits non-zero if anything is wrong.
 
+<img width="1604" height="3164" alt="tool-sweep-dark" src="https://github.com/user-attachments/assets/783e86d3-9207-4df7-91c4-1717d12643c0" />
+
 ```bash
 export PRICERANGER_TOKEN=<your minted token>
 python priceranger_mcp_tool_eval.py
