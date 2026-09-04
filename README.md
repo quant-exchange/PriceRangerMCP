@@ -1,5 +1,51 @@
 <img width="1944" height="432" alt="priceranger_logo" src="https://github.com/user-attachments/assets/f5123b8e-4315-43e6-96ee-4a7cabd08b54" />
 
+## Start here — what this actually does for a trading agent
+
+You are building an agent that touches markets. It can already get a price:
+every broker API hands you one for free. What it cannot get anywhere is an
+honest answer to the only question that decides position size — **"how wrong
+could this be over the next hour, and who checked?"**
+
+That is the hole this fills. Per asset, per hour, PriceRanger publishes:
+
+- a price range that prints **the coverage it actually hit next to the coverage
+  it promised** (90% target, and the realized number beside it — including when
+  that number is bad)
+- a ladder of price levels carrying **measured** touch odds, dwell time and fill
+  probability, graded against real tape rather than drawn on a chart
+- a routing list naming the assets where its own numbers **lose to a free
+  baseline**, so your agent knows where not to use it
+
+That last bullet is the one people reread. The server ships the cases where it
+is the wrong tool.
+
+**Why we built it.** We ran the forecasting first and the forecasts lost. At a
+one-hour horizon a point prediction does not reliably beat "assume the last
+price holds," and we publish those failing grades rather than hiding them. What
+did survive was the *width* — how far price actually travels, and how often a
+calibrated band contains it. So the product stopped being a prediction and
+became a referee: everything is written down before the bar closes and graded
+after it prints, forever, in public. No backtests.
+
+**Why you might care.** Language models are agreeable. Point an agent at a
+number with no evidence attached and it will happily size into it, because
+nothing in the payload gives it grounds to object. Receipts are the only defense
+that survives contact with a model that wants to please you — and a graded `F`
+is genuinely useful, because it closes off an action your agent would otherwise
+take.
+
+**What it is not.** Not a signal service, not a prediction that beats the
+market, and not execution. It is read-only: no orders, no positions, no account,
+no bid/ask. The step where money moves stays in your code, behind your risk
+limits. Start on paper.
+
+The two scripts below are how you check all of that for yourself instead of
+taking our word for it — one asks a model to grade the service, the other is a
+CI test that fails when any tool stops carrying its evidence.
+
+---
+
 # PriceRanger MCP — Agent Value Check
 
 An open example of how an agentic process qualifies the
