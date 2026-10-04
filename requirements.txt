@@ -1,11 +1,20 @@
-# Direct dependencies of priceranger_mcp_eval.py.
-# Versions below are the ones this example was last run against, green, in prod.
+# Dependencies for the quick start and optional advanced examples.
+# The quick start needs only fastmcp. Install this full file for the evaluators.
+#
+# priceranger_mcp_tool_eval.py needs only httpx + langchain-mcp-adapters: no
+# grader, no graph. If the sweep is all you want, that is the whole install.
 
+fastmcp>=3,<4
 httpx~=0.28.1
+PyYAML~=6.0.3
 
 langchain-core~=1.6.1
-langchain-openai~=1.6.0
 langchain-mcp-adapters~=0.3.2
+
+# Graders. config.yaml selects one; only that one is imported at runtime, so
+# you can drop whichever you do not use.
+langchain-openai~=1.6.0
+langchain-anthropic~=1.7.0
 
 # Pinned to the 1.2 line: the example uses the prebuilt create_react_agent,
 # deprecated since langgraph 1.0 and liable to be dropped in 2.x.
