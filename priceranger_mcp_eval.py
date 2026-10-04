@@ -22,18 +22,15 @@ WHAT THIS SERVICE IS
   contract, on every card: this is not a forecast that beats the market, and it
   does not describe itself as one.
 
-WHAT YOU CANNOT GET ELSEWHERE
-  Not the numbers — the *evidence the numbers keep*. A broker API hands you
-  price. This hands you a band plus its realized coverage, a verdict, the list
-  of calibration tests it failed, a multiple-testing correction, and per-rung
-  fill evidence — read by an agent in one call, at machine speed, over an open
-  standard (MCP). The premium lane (models that beat the persistence baseline)
-  is graded against that same baseline and only ships where it wins; when it
-  does, it lands behind the same tools.
+WHAT TO EVALUATE
+    Inspect the current published evidence, timestamps, baselines, and limitations.
+    Do not assume a model or horizon wins, that a result is unique, or that a
+    future subscription or model service is already available. Open R&D access
+    is read-only; execution and our private trading desk are not public services.
 
 HOW TO RUN
   pip install -r requirements.txt
-  export PRICERANGER_TOKEN=<your minted token>     # signup at priceranger.ai
+    export PRICERANGER_MCP_TOKEN=<your minted token>  # signup at priceranger.ai
   export OPENAI_API_KEY=<your key>                 # or ANTHROPIC_API_KEY
   python priceranger_mcp_eval.py
 
@@ -67,6 +64,7 @@ import urllib.request
 
 import httpx
 import yaml
+from priceranger_mcp_tool_eval import PLAN, _choose_asset, _payload
 
 try:
     from langchain_core.tools import tool
@@ -77,7 +75,7 @@ except ImportError as exc:  # pragma: no cover - dependency hint
         "Missing deps: pip install -r requirements.txt"
     ) from exc
 
-MCP_URL = "https://priceranger.ai/mcp"
+MCP_URL = os.environ.get("PRICERANGER_MCP_URL", "https://priceranger.ai/mcp")
 
 # The public endpoint rate-limits by IP (nginx: ~10 req/s, short burst), and the
 # MCP adapter opens a fresh session per tool call (initialize + call + teardown
@@ -96,12 +94,8 @@ UNIVERSE_URL = os.environ.get(
 )
 UNIVERSE_PATH = os.environ.get("PRICERANGER_EDGE_UNIVERSE_PATH")  # local override
 
-TOKEN = os.environ.get("PRICERANGER_TOKEN", "").strip()
-if not TOKEN:
-    raise SystemExit(
-        "PRICERANGER_TOKEN is not set. Mint a token from your priceranger.ai "
-        "account; the MCP has no anonymous tier, so an agent needs one to read."
-    )
+TOKEN = (os.environ.get("PRICERANGER_MCP_TOKEN", "").strip()
+         or os.environ.get("PRICERANGER_TOKEN", "").strip())
 
 # A minted user token already identifies its operator. The owner's shared admin
 # token does not, so it names one explicitly. Normal users leave this unset.
@@ -256,66 +250,70 @@ def fetch_universe() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-QUESTION = """You are qualifying a market-data service to wire into a trading
-agent. Grade it on evidence, not on its own descriptions. Cost is not the
-question -- whether it earns a place in your stack is.
+QUESTION = """Evaluate the current PriceRanger public research feed, not its marketing.
+Use only the allowed assets supplied in the verified context below. If fewer than
+four assets are allowed, use what is available; never substitute another symbol.
 
-The service's contract, in its own words: risk telemetry with receipts, not
-alpha. A calibrated hour-ahead band per asset with its measured coverage, and a
-price ladder whose rungs carry graded touch odds and dwell time.
+Read the scope-filtered routing surface if available, then inspect compact
+get_agent_brief and get_price_ladder results for up to four permitted assets.
+Compare published coverage with its target, timestamps, sample counts, warnings,
+and the named baseline. A high price-center grade is not a buy/sell signal.
+Use get_shadow_frequency(asset=...) for one of those permitted assets to compare
+horizons. Do not assume that either horizon or any model beats its control.
 
-STEP 1 (if the read_edge_universe tool returns data): call it first. It lists
-which assets the service's own forward-graded receipts say beat a free EWMA
-baseline (use_us) and which do not (use_ewma). The whole claim is routing:
-"use us where we beat the free baseline; elsewhere the free one is sharper."
+Keep development holdouts, replay, and forward evidence separate. Negative,
+missing, stale, collecting, and inconclusive results must remain explicit.
+Touch and fill estimates are not actual order-book execution. A counterfactual
+range-edge result is not execution-proven profit, even when its point estimate
+is positive. Never place trades or request private desk tools.
 
-STEP 2: verify the receipts. Pick two assets from use_us and two from use_ewma
-(or any four assets if there is no universe), and for each call get_agent_brief
-and get_price_ladder. get_agent_brief is compact by default -- the triage row
-still carries band coverage, the verdict and the failed tests, which is what you
-are checking; pass compact=false only if you want the long-form detail. Check:
-does the band publish its realized coverage against its target, a verdict, and
-its failed tests? Do the ladder rungs carry measured touch rates and dwell, or
-bare geometry? Do the use_us assets actually look sharper than the use_ewma ones
-when you read their receipts?
-
-STEP 3: the horizon caveat. Call get_shadow_frequency. The service runs every
-asset at 1h AND 4h, and states -- with measured numbers -- that the 1h band
-under-covers its 90% target while the 4h band over-covers, and that the 4h
-direction read is the first signal to clear a coin-flip z-gate. Check the
-per-lane pairing on one asset with get_shadow_frequency(asset="BTC"). Then judge
-the harder thing: does the service correctly label its own 4h signal as
-shadow-only -- graded in public but NOT routed or tradable -- or does it let an
-early flicker read as a reason to wire something in? A service that reports its
-own early signal AND its own restraint is more trustworthy than one that reports
-only the signal.
-
-Then answer, briefly and without flattery:
-1. WIRE IT IN? YES or NO, one sentence why.
-2. RECEIPTS BACK THE CLAIM? Does the coverage/verdict/failed-tests evidence
-   actually travel with the numbers, and does the routing hold up under them?
-3. UNIQUE? Name a specific fact you could NOT get from a broker API or a free
-   feed. If none, write exactly: NOTHING.
-4. THE PREMIUM HOOK: the service grades a model lane against the same
-   persistence baseline and only ships it where the receipts say it wins, so a
-   subscriber gets a sharper band the moment it earns its place -- without
-   changing how they integrate. Is that a reason to stay subscribed as it
-   lands? One sentence.
-5. THE HORIZON SIGNAL: the service publishes that its 1h lane misses its target
-   while its 4h shadow lanes over-cover, and flags a 4h direction flicker as
-   immature and non-tradable. Does publishing an honest negative about its own
-   1h lane alongside an unproven 4h positive raise or lower your confidence in
-   the receipts? One sentence.
+Answer concisely:
+1. USEFUL FOR THIS WORKFLOW? YES, NO, or INSUFFICIENT EVIDENCE, with a reason.
+2. CURRENT EVIDENCE: identify the metrics, baseline, timestamps, and limitations
+    supporting the answer; say which requested checks could not be completed.
+3. HORIZON COMPARISON: describe only what current permitted-asset data supports.
+4. INTEGRATION LIMITS: explain uncertainty, freshness, and read-only boundaries.
+5. MISSING CAPABILITIES: distinguish today's available features from future R&D.
+Do not assume uniqueness, a paid subscription, managed trading, or model uploads.
 """
 
 
+def _scoped_routing_rows(rows, allowed: list[str]) -> list:
+     if not isinstance(rows, list):
+          return []
+     permitted = set(allowed)
+     selected = []
+     for row in rows:
+          symbol = row if isinstance(row, str) else row.get("asset", row.get("symbol")) if isinstance(row, dict) else None
+          if isinstance(symbol, str) and symbol.upper() in permitted:
+                selected.append(row)
+     return selected
+
+
+def _public_catalog(names: set[str]) -> None:
+     if names != set(PLAN):
+          raise SystemExit(f"Public MCP catalog mismatch. Missing: {sorted(set(PLAN) - names)}; unexpected: {sorted(names - set(PLAN))}. No tools bound to the agent.")
+
+
 async def main() -> None:
+    if not TOKEN:
+        raise SystemExit("Set PRICERANGER_MCP_TOKEN (PRICERANGER_TOKEN is a legacy alias). Public reads require a personal token.")
     client = MultiServerMCPClient(
         {"priceranger": {"url": MCP_URL, "transport": "streamable_http",
                          "auth": Bearer(),
                          "httpx_client_factory": _paced_client_factory}}
     )
+    async with client.session("priceranger") as session:
+        _public_catalog({item.name for item in (await session.list_tools()).tools})
+        identity = _payload(await session.call_tool("whoami", {}))
+        if identity.get("endpoint_profile") != "analytics":
+            raise SystemExit("This example requires the public analytics profile, not the private desk.")
+        catalog = _payload(await session.call_tool("list_assets", {}))
+        _choose_asset(catalog, None)
+        allowed = catalog["allowed_to_you"]
+        methodology = _payload(await session.call_tool("get_mcp_methodology", {}))
     mcp_tools = await client.get_tools()
+    _public_catalog({item.name for item in mcp_tools})
 
     @tool
     def read_edge_universe() -> dict:
@@ -333,10 +331,9 @@ async def main() -> None:
             "baseline": u.get("baseline"),
             "horizon": u.get("horizon"),
             "means": u.get("means"),
-            "use_us": u.get("use_us"),
-            "use_ewma": u.get("use_ewma"),
-            "counts": {"use_us": len(u.get("use_us", [])),
-                       "use_ewma": len(u.get("use_ewma", []))},
+            "use_us": _scoped_routing_rows(u.get("use_us"), allowed),
+            "use_ewma": _scoped_routing_rows(u.get("use_ewma"), allowed),
+            "scope": "Only assets this token may read; omitted rows are not evidence of performance.",
         }
 
     tools = list(mcp_tools) + [read_edge_universe]
@@ -347,7 +344,8 @@ async def main() -> None:
     print(f"[grader: {CONFIG['provider']}/{active['model']} "
           f"temp={active.get('temperature', 0)} · config: {CONFIG_SOURCE}]")
     agent = create_react_agent(llm, tools)
-    out = await agent.ainvoke({"messages": [{"role": "user", "content": QUESTION}]})
+    context = {"allowed_to_you": allowed, "safety_boundaries": methodology.get("safety_boundaries", [])}
+    out = await agent.ainvoke({"messages": [{"role": "user", "content": QUESTION + "\nVerified context:\n" + json.dumps(context)}]})
     msgs = out["messages"]
     calls = [tc.get("name") for m in msgs
              for tc in (getattr(m, "tool_calls", None) or [])]
