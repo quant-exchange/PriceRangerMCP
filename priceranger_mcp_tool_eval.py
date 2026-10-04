@@ -2,13 +2,13 @@
 
 WHAT THIS IS
   The sibling of priceranger_mcp_eval.py. That one asks a language model to
-  *judge* the service. This one asks nothing: it calls every tool the server
-  advertises, checks each payload actually contains the evidence the tool
+    *judge* the service. This one asks nothing: it calls known public tools the server
+    advertises, checks each payload actually contains the evidence the tool
   claims to carry, and prints what each tool is worth. No API key, no grader,
   no opinions — just the surface, exercised.
 
-  Run it as a test. It exits 0 when every advertised tool answered with its
-  receipts, and 1 when something is missing, broken, or should not be there.
+    Run it as a test. Exit 0 means contract checks passed; review unavailable,
+    collecting, stale and skipped rows. Exit 1 means a contract or catalog failed.
 
 WHY IT EXISTS
   Three failure modes it catches that a docs page cannot:
@@ -24,7 +24,7 @@ WHY IT EXISTS
 
 HOW TO RUN
   pip install -r requirements.txt
-  export PRICERANGER_TOKEN=<your minted token>     # signup at priceranger.ai
+    export PRICERANGER_MCP_TOKEN=<your minted token> # signup at priceranger.ai
   python priceranger_mcp_tool_eval.py
 
   Options:
@@ -100,14 +100,15 @@ USING THIS WITH YOUR OWN TOOLS, AND WITH OTHER MCP SERVERS
 
 NOTE ON DUPLICATION
   The Bearer auth class and the paced transport below also appear in
-  priceranger_mcp_eval.py. That is deliberate — each example is meant to be
-  copied out of this folder on its own and still work.
+    priceranger_mcp_eval.py. Keep those two files together: the grader imports
+    the sweep's public catalog and payload/scope helpers to prevent drift.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
 import time
@@ -126,7 +127,8 @@ MCP_URL = os.environ.get("PRICERANGER_MCP_URL", "https://priceranger.ai/mcp")
 # a session per call — but it still paces itself rather than sprinting.
 MIN_CALL_GAP_SECONDS = 0.35
 
-TOKEN = os.environ.get("PRICERANGER_TOKEN", "").strip()
+TOKEN = (os.environ.get("PRICERANGER_MCP_TOKEN", "").strip()
+         or os.environ.get("PRICERANGER_TOKEN", "").strip())
 # A minted user token already identifies its operator. The owner's admin token
 # does not, so it names one explicitly. Normal users leave this unset.
 OPERATOR = os.environ.get("PRICERANGER_OPERATOR", "").strip()
@@ -219,7 +221,7 @@ PLAN: dict[str, dict] = {
                  "server: one asset's coverage against target, band verdict, "
                  "failed calibration tests, and skill vs the free EWMA "
                  "baseline -- around 1KB.",
-        "args": lambda ctx: {"asset": ctx["asset"]},
+        "args": lambda ctx: {"asset": ctx["asset"], "compact": True},
         "evidence": ("band_coverage", "band_verdict", "band_failed_tests",
                      "band_baseline_skill_pct", "center_beats_baseline",
                      "recommended_next_tool"),
@@ -284,10 +286,9 @@ PLAN: dict[str, dict] = {
                      "not_modelled", "ranking_objective"),
     },
     "get_shadow_frequency": {
-        "value": "The 1H-vs-4H comparison as receipts rather than a claim: the "
-                 "1h band under-covers its target while the 4h shadow band "
-                 "over-covers. Labelled shadow-only -- graded in public, not "
-                 "routed and not tradable.",
+        "value": "Compare current 1H and 4H research receipts, sample counts, "
+                 "coverage and limitations without assuming either horizon "
+                 "wins. Shadow research is not routed or tradable.",
         "args": lambda ctx: {},
         "evidence": ("fleet", "theory", "not_routing", "signal_lanes",
                      "lanes_omitted"),
@@ -316,12 +317,14 @@ def _payload(result) -> dict:
     data = getattr(result, "structuredContent", None)
     if isinstance(data, dict):
         # FastMCP wraps a non-dict return under 'result'; ours return dicts.
-        return data.get("result") if set(data) == {"result"} else data
+        value = data.get("result") if set(data) == {"result"} else data
+        return value if isinstance(value, dict) else {"_invalid_payload_type": type(value).__name__}
     for block in (getattr(result, "content", None) or []):
         text = getattr(block, "text", None)
         if text:
             try:
-                return json.loads(text)
+                value = json.loads(text)
+                return value if isinstance(value, dict) else {"_invalid_payload_type": type(value).__name__}
             except json.JSONDecodeError:
                 return {"_text": text}
     return {}
@@ -332,6 +335,111 @@ def _forbidden(name: str) -> str | None:
         if name.startswith(prefix):
             return prefix
     return None
+
+
+def _choose_asset(catalog: dict, override: str | None) -> str:
+    allowed = catalog.get("allowed_to_you")
+    if not isinstance(allowed, list) or not allowed or not all(isinstance(asset, str) and asset for asset in allowed):
+        raise SystemExit("No valid allowed_to_you asset scope. Check the token's access; no asset was guessed.")
+    selected = override.upper() if override else allowed[0]
+    if selected not in allowed:
+        raise SystemExit(f"{selected} is outside this token's allowed_to_you scope.")
+    return selected
+
+
+def _probe_price(brief: dict) -> float | None:
+    center = brief.get("forecast_center")
+    if isinstance(center, bool) or not isinstance(center, (int, float)) or not math.isfinite(center) or center <= 0:
+        return None
+    return float(center) * 0.99
+
+
+_DICT_EVIDENCE = {
+    "about", "band_coverage", "forecast_accuracy", "freshness", "construction",
+    "range_skill_card", "calibration_audit", "walk_forward", "tail_zone",
+    "band_readiness", "range_edge", "touch_calibration", "tail_zone_evidence",
+    "fill_model", "recommended", "cost_model", "how_to_read", "fleet",
+    "h1_band", "h4_band", "h1_direction", "h4_direction",
+}
+_LIST_EVIDENCE = {
+    "allowed_assets", "pool", "allowed_to_you", "methodology", "safety_boundaries",
+    "band_failed_tests", "briefs", "horizons", "alternatives", "signal_lanes", "next_calls",
+}
+_TEXT_EVIDENCE = {
+    "operator", "endpoint_profile", "token_role", "access_note", "band_verdict",
+    "recommended_next_tool", "note", "coverage_state", "lane", "schema_version",
+    "means", "ranking_objective", "plain_english",
+}
+_PENDING_STATES = {"calibrating", "collecting", "insufficient", "insufficient_evidence", "missing", "unavailable"}
+
+
+def _evidence_status(payload: dict, required: tuple[str, ...]) -> tuple[str, list[str]]:
+    if not isinstance(payload, dict) or not payload:
+        return "THIN", ["payload: expected a nonempty object"]
+    if "available" in payload and not isinstance(payload["available"], bool):
+        return "THIN", ["available: expected a boolean"]
+    if payload.get("available") is False:
+        return "UNAVAILABLE", []
+    coverage = payload.get("band_coverage")
+    state = coverage.get("state") if isinstance(coverage, dict) else payload.get("coverage_state")
+    collecting = state in _PENDING_STATES
+    issues = []
+    for key in required:
+        value = payload.get(key)
+        if key not in payload:
+            issues.append(key)
+        elif key in _DICT_EVIDENCE and (not isinstance(value, dict) or not value):
+            issues.append(f"{key}: expected a nonempty object")
+        elif key in _LIST_EVIDENCE and not isinstance(value, list):
+            issues.append(f"{key}: expected an array")
+        elif key in _TEXT_EVIDENCE and (not isinstance(value, str) or not value.strip()):
+            issues.append(f"{key}: expected nonempty text")
+        elif key in {"band_baseline_skill_pct", "touch_probability_pct"}:
+            if value is None and collecting:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                issues.append(f"{key}: expected a finite number or explicitly immature evidence")
+            elif key == "touch_probability_pct" and not 0 <= value <= 100:
+                issues.append(f"{key}: outside 0..100")
+        elif key == "center_beats_baseline":
+            if not (isinstance(value, bool) or value is None and collecting):
+                issues.append(f"{key}: expected a boolean or explicitly immature evidence")
+        elif key == "not_routing" and value is not True:
+            issues.append("not_routing: expected true")
+        elif key == "count" and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+            issues.append("count: expected a nonnegative integer")
+        elif value is None:
+            issues.append(f"{key}: null evidence without an explicit unavailable state")
+    if "endpoint_profile" in required and payload.get("endpoint_profile") != "analytics":
+        issues.append("endpoint_profile: expected analytics")
+    if isinstance(coverage, dict) and coverage.get("state") == "measured":
+        for key in ("band_coverage_pct", "coverage_target_pct"):
+            value = coverage.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 100:
+                issues.append(f"band_coverage.{key}: invalid measured percentage")
+    if "schema_version" in required and payload.get("schema_version") != "range_edge.v2":
+        issues.append("schema_version: unsupported range-edge contract")
+    edge = payload.get("range_edge")
+    if "range_edge" in required and isinstance(edge, dict):
+        if edge.get("published") is not True or edge.get("accounting") != "live_policy_stop_first":
+            issues.append("range_edge: missing corrected public accounting contract")
+        execution = edge.get("execution")
+        if not isinstance(execution, dict) or not isinstance(execution.get("validated"), bool):
+            issues.append("range_edge.execution.validated: expected a boolean")
+        if not isinstance(edge.get("stale"), bool):
+            issues.append("range_edge.stale: expected a boolean")
+        for key in ("netcap_pct", "sample_windows"):
+            value = edge.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+                issues.append(f"range_edge.{key}: expected finite evidence or an explicit null")
+    if issues:
+        return "THIN", issues
+    if collecting:
+        return "COLLECTING", []
+    if payload.get("stale") is True or (isinstance(edge, dict) and edge.get("stale") is True) or (isinstance(payload.get("freshness"), dict) and
+                                       (payload["freshness"].get("stale") is True or payload["freshness"].get("state") == "stale")):
+        return "STALE", []
+    return "OK", []
 
 
 async def sweep(asset_override: str | None) -> dict:
@@ -365,31 +473,31 @@ async def sweep(asset_override: str | None) -> dict:
         who, _, err = await call("whoami", {})
         if err:
             raise SystemExit(f"whoami failed, cannot sweep: {err}")
-        allowed = who.get("allowed_assets") or []
-        asset = (asset_override or (allowed[0] if allowed else "BTC")).upper()
-        brief, _, _ = await call("get_agent_brief", {"asset": asset})
-        center = brief.get("forecast_center")
+        if who.get("endpoint_profile") != "analytics":
+            raise SystemExit("This example requires the public analytics profile, not a private desk endpoint.")
+        catalog, _, err = await call("list_assets", {})
+        if err:
+            raise SystemExit(f"list_assets failed, cannot resolve scope: {err}")
+        asset = _choose_asset(catalog, asset_override)
+        brief, _, _ = await call("get_agent_brief", {"asset": asset, "compact": True})
         ctx = {
             "asset": asset,
             "operator": who.get("operator"),
             # A shade below center: a plausible buy-side resting level, not a
             # tail probe, so the touch curve is exercised in its measured range.
-            "probe_price": round(float(center) * 0.99, 6) if center else 100.0,
+            "probe_price": _probe_price(brief),
         }
 
         async def grade(label: str, name: str, case: dict) -> dict:
+            if name == "get_touch_probability" and ctx["probe_price"] is None:
+                return {"tool": label, "status": "SKIPPED", "ms": 0, "bytes": 0,
+                        "missing": [], "error": None, "value": case["value"],
+                        "reason": "No valid forecast_center was published; no price was invented."}
             payload, elapsed, error = await call(name, case["args"](ctx))
-            missing = [k for k in case["evidence"] if k not in payload]
             if error:
-                status = "FAIL"
-            elif not payload.get("available", True):
-                # A published-but-unavailable surface is a legitimate answer:
-                # the server says so instead of inventing numbers.
-                status, missing = "UNAVAILABLE", []
-            elif missing:
-                status = "THIN"
+                status, missing = "FAIL", []
             else:
-                status = "OK"
+                status, missing = _evidence_status(payload, case["evidence"])
             return {"tool": label, "status": status, "ms": round(elapsed),
                     "bytes": len(json.dumps(payload)), "missing": missing,
                     "error": error, "value": case["value"]}
@@ -457,7 +565,8 @@ COMPOSING PRICERANGER WITH OTHER MCP SERVERS
 
 def report(result: dict) -> int:
     icon = {"OK": "PASS", "THIN": "THIN", "FAIL": "FAIL",
-            "UNAVAILABLE": "N/A ", "UNDOCUMENTED": "NEW "}
+            "UNAVAILABLE": "N/A ", "UNDOCUMENTED": "NEW ",
+            "SKIPPED": "SKIP", "COLLECTING": "WAIT", "STALE": "OLD "}
     print(f"PriceRanger MCP tool sweep — {result['url']}")
     print(f"operator: {result['operator']}   asset: {result['asset']}   "
           f"tools advertised: {result['advertised']}\n")
@@ -473,6 +582,8 @@ def report(result: dict) -> int:
             print(f"         !! missing evidence: {', '.join(row['missing'])}")
         if row.get("error"):
             print(f"         !! {row['error']}")
+        if row.get("reason"):
+            print(f"         {row['reason']}")
         total += row["bytes"]
         print()
 
@@ -498,7 +609,7 @@ def report(result: dict) -> int:
               f"{result['not_advertised'] or ''} "
               f"{result['leaked_write_tools'] or ''}".strip())
         return 1
-    print("RESULT: PASSED — every advertised tool answered with its receipts.")
+    print("RESULT: PASSED — contract checks passed; review any SKIPPED, UNAVAILABLE, COLLECTING or STALE rows.")
     return 0
 
 
@@ -549,7 +660,7 @@ def main() -> None:
         return
     if not TOKEN:
         raise SystemExit(
-            "PRICERANGER_TOKEN is not set. Mint a token from your "
+            "PRICERANGER_MCP_TOKEN is not set (PRICERANGER_TOKEN is a legacy alias). Mint a token from your "
             "priceranger.ai account; the MCP has no anonymous tier."
         )
 
